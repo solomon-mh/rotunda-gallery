@@ -10,7 +10,8 @@ import { useResolvedTheme } from "@/lib/theme";
 import { buildSlots, scrollFor } from "./layout";
 import type { SceneHandle } from "./RotundaScene";
 import ListView from "./ListView";
-import { ArrowLeft, ArrowRight } from "../icons";
+import { ArrowLeft, ArrowRight, SoundIcon } from "../icons";
+import { getGalleryAudio, peekGalleryAudio } from "./ambience";
 
 const RotundaScene = dynamic(() => import("./RotundaScene"), { ssr: false });
 
@@ -23,6 +24,7 @@ export default function GalleryHome() {
   const theme = useResolvedTheme();
   const setTransition = useStore((s) => s.setTransition);
   const setGalleryScroll = useStore((s) => s.setGalleryScroll);
+  const setSetting = useStore((s) => s.setSetting);
   const { slots, period } = useMemo(() => buildSlots(), []);
   // First visit: start with the Mona Lisa in front of you; afterwards resume where you left off.
   const [initialScroll] = useState(() => useStore.getState().galleryScroll || scrollFor(slots[1]));
@@ -57,6 +59,36 @@ export default function GalleryHome() {
     const t = setTimeout(() => setReady(true), 6000);
     return () => clearTimeout(t);
   }, []);
+
+  // Ambient sound. Browsers only let audio start from a user gesture, so a saved
+  // "sound on" waits for the first click or key press on the page.
+  const soundOn = settings.sound && settings.showVisitors;
+  useEffect(() => {
+    if (!soundOn) {
+      peekGalleryAudio()?.setEnabled(false);
+      return;
+    }
+    const audio = getGalleryAudio();
+    audio.setEnabled(true);
+    if (audio.ctx.state === "running") return;
+    const wake = () => audio.setEnabled(true);
+    window.addEventListener("pointerdown", wake, { once: true });
+    window.addEventListener("keydown", wake, { once: true });
+    return () => {
+      window.removeEventListener("pointerdown", wake);
+      window.removeEventListener("keydown", wake);
+    };
+  }, [soundOn]);
+  useEffect(() => {
+    peekGalleryAudio()?.setPaused(paused);
+  }, [paused]);
+  useEffect(() => () => peekGalleryAudio()?.setPaused(true), []);
+  const toggleSound = () => {
+    const next = !soundOn;
+    if (next) getGalleryAudio().setEnabled(true); // inside the click, so the browser allows it
+    if (next && !settings.showVisitors) setSetting("showVisitors", true);
+    setSetting("sound", next);
+  };
 
   // The "View" pill follows the cursor without re-rendering.
   useEffect(() => {
@@ -101,6 +133,8 @@ export default function GalleryHome() {
           initialScroll={initialScroll}
           autoWalk={settings.autoWalk}
           showLabels={settings.showLabels}
+          showVisitors={settings.showVisitors}
+          sound={soundOn}
           highQuality={settings.highQuality}
           dark={theme === "dark"}
           onCurrent={setCurrent}
@@ -138,6 +172,15 @@ export default function GalleryHome() {
         </div>
 
         <div className={`walk-controls${modalOpen ? " is-hidden" : ""}`}>
+          <button
+            className={`circle-btn${soundOn ? " is-on" : ""}`}
+            onClick={toggleSound}
+            aria-pressed={soundOn}
+            aria-label={soundOn ? "Mute gallery sound" : "Play gallery sound"}
+            title={soundOn ? "Mute the room" : "Hear the room"}
+          >
+            <SoundIcon size={15} muted={!soundOn} />
+          </button>
           <button className="circle-btn" onClick={() => scene.current?.prev()} aria-label="Previous work">
             <ArrowLeft size={13} />
           </button>

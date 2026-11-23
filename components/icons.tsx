@@ -103,6 +103,20 @@ export const MoonIcon = ({ size, ...p }: P) => (
   </svg>
 );
 
+export const SoundIcon = ({ size, muted, ...p }: P & { muted?: boolean }) => (
+  <svg {...base(size)} {...p}>
+    <path d="M4 9.5h3.2L12 5.5v13l-4.8-4H4z" />
+    {muted ? (
+      <path d="m16 9.5 5 5m0-5-5 5" />
+    ) : (
+      <>
+        <path d="M15.5 9.2a4 4 0 0 1 0 5.6" />
+        <path d="M18.2 6.6a7.6 7.6 0 0 1 0 10.8" />
+      </>
+    )}
+  </svg>
+);
+
 export const MenuIcon = ({ size, ...p }: P) => (
   <svg {...base(size)} {...p}>
     <path d="M4 7h16M4 12h16M4 17h16" />

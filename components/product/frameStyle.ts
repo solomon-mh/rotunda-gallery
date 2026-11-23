@@ -5,6 +5,17 @@ import { FRAME_COLORS, type PrintOptions } from "@/lib/pricing";
  * Frames are drawn with box-shadows so they never change the image's layout box —
  * that keeps the gallery → product page image hand-off pixel-exact.
  */
+/**
+ * How far (px) the frame reaches outside the image box. The frame is a box-shadow,
+ * so layout doesn't know about it — callers reserve this much room around the image.
+ */
+export function frameOutset(frame: PrintOptions["frame"], scale = 1) {
+  const px = (n: number) => Math.max(1, Math.round(n * scale));
+  if (frame === "classic") return px(25);
+  if (frame === "canvas") return px(13);
+  return 0;
+}
+
 export function frameStyle(o: Pick<PrintOptions, "frame" | "frameColor">, scale = 1): CSSProperties {
   const color = FRAME_COLORS.find((c) => c.id === o.frameColor)!.hex;
   const px = (n: number) => `${Math.max(1, Math.round(n * scale))}px`;

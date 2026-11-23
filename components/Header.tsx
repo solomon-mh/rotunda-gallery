@@ -134,9 +134,11 @@ function SettingsMenu() {
     };
   }, [open]);
 
-  const rows: { key: "autoWalk" | "showLabels" | "highQuality"; label: string; hint: string }[] = [
+  const rows: { key: "autoWalk" | "showLabels" | "showVisitors" | "sound" | "highQuality"; label: string; hint: string }[] = [
     { key: "autoWalk", label: "Auto-walk", hint: "Drift slowly through the rotunda" },
-    { key: "showLabels", label: "Wall labels", hint: "Show captions under each work" },
+    { key: "showLabels", label: "Wall labels", hint: "Show a caption beside each work" },
+    { key: "showVisitors", label: "Visitors", hint: "Other people wandering the gallery" },
+    { key: "sound", label: "Room sound", hint: "Murmured conversation, footsteps, the guide" },
     { key: "highQuality", label: "High quality", hint: "Sharper rendering, more GPU" },
   ];
 

@@ -21,7 +21,7 @@ import { BookmarkIcon, MinusIcon, PlusIcon, RoomIcon } from "../icons";
 import Accordion from "./Accordion";
 import ViewInRoom from "./ViewInRoom";
 import ArtCard from "../ArtCard";
-import { frameStyle } from "./frameStyle";
+import { frameOutset, frameStyle } from "./frameStyle";
 
 type Props = {
   slug: string;
@@ -47,6 +47,7 @@ export default function ProductView({ slug, mediaRef, detailsRef, belowRef }: Pr
 
   const price = unitPrice(art, o);
   const aspect = art.width / art.height;
+  const outset = frameOutset(o.frame); // room for the frame drawn outside the image box
   const siblings = useMemo(() => worksIn(art.collection).filter((a) => a.slug !== art.slug), [art]);
   const position = worksIn(art.collection).findIndex((a) => a.slug === art.slug) + 1;
   const set = <K extends keyof PrintOptions>(k: K, v: PrintOptions[K]) => setO((prev) => ({ ...prev, [k]: v }));
@@ -62,7 +63,13 @@ export default function ProductView({ slug, mediaRef, detailsRef, belowRef }: Pr
     <div className="pv">
       <div className="pv__top">
         <div className="pv__media-col">
-          <div className="pv__media-wrap" style={{ width: `min(100%, calc(var(--pv-media-h) * ${aspect.toFixed(4)}))` }}>
+          <div
+            className="pv__media-wrap"
+            style={{
+              width: `min(100% - ${2 * outset}px, calc((var(--pv-media-h) - ${2 * outset}px) * ${aspect.toFixed(4)}))`,
+              margin: `${outset}px ${outset}px 0`,
+            }}
+          >
           <div
             ref={mediaRef}
             className="pv__media"
@@ -82,7 +89,7 @@ export default function ProductView({ slug, mediaRef, detailsRef, belowRef }: Pr
               sizes="(max-width: 900px) 92vw, 46vw"
             />
           </div>
-          <div className="pv__media-bar">
+          <div className="pv__media-bar" style={{ marginTop: 16 + outset }}>
             <span className="mono-xxs muted">1/1</span>
             <button className="room-btn" onClick={() => setRoom(true)}>
               <RoomIcon size={18} />

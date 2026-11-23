@@ -3,14 +3,17 @@ import { Canvas, useFrame, useThree, type ThreeEvent } from "@react-three/fiber"
 import { useEffect, useImperativeHandle, useMemo, useRef } from "react";
 import type { TransitionRect } from "@/lib/store";
 import { ART_Y, FOCUS, RI, RO, VISIBLE, WALL_H, basePose, scrollFor, wrap, type Slot } from "./layout";
+import Visitors from "./Visitors";
+import { peekGalleryAudio } from "./ambience";
+import { TRACK_R, buildFrame, fixtureGeometry, fixturePose, frameMaterials, frameWidth, litMaterial, poolGeometry } from "./hang";
 import {
   PALETTES,
-  archTexture,
   ceilingTexture,
   floorTexture,
   labelTexture,
   loadFonts,
   placardTexture,
+  poolTexture,
   shadowTexture,
   wallTexture,
 } from "./textures";
@@ -29,6 +32,8 @@ type Props = {
   initialScroll: number;
   autoWalk: boolean;
   showLabels: boolean;
+  showVisitors: boolean;
+  sound: boolean;
   highQuality: boolean;
   dark: boolean;
   onCurrent: (slotIndex: number) => void;
@@ -50,10 +55,14 @@ type Ctl = {
   lastInput: number;
   dragging: boolean;
   unfocusRequest: boolean;
+  /** Slot being looked at up close (-1 when walking). */
+  focused: number;
 };
 
-const LABEL_W = 1.15;
-const LABEL_H = (LABEL_W * 260) / 720;
+const LABEL_W = 0.62;
+const LABEL_H = (LABEL_W * 300) / 720;
+/** Height of a label's top edge above the floor — museum eye level. */
+const LABEL_TOP = 1.62;
 const SHADOW_INNER = 176 / 256;
 
 const easeInOut = (t: number) => (t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2);
@@ -71,6 +80,7 @@ export default function RotundaScene(props: Props) {
     lastInput: 0,
     dragging: false,
     unfocusRequest: false,
+    focused: -1,
   });
   const wrapRef = useRef<HTMLDivElement>(null);
   const { slots, period } = props;
@@ -266,12 +276,34 @@ function lerpRing(out: THREE.Vector3, a: THREE.Vector3, b: THREE.Vector3, t: num
   return out.set(Math.sin(ang) * r, THREE.MathUtils.lerp(a.y, b.y, t), Math.cos(ang) * r);
 }
 
+/**
+ * Where a work's label hangs: beside the frame at eye level, laid onto the wall's curve
+ * (a label that far from the centre would otherwise float off the convex wall or sink
+ * into the concave one).
+ */
+function labelPose(s: Slot, fw: number) {
+  const x = s.w / 2 + fw + 0.2 + LABEL_W / 2;
+  const y = LABEL_TOP - ART_Y - LABEL_H / 2;
+  if (s.wall === "outer") {
+    const ow = s.w + 2 * fw;
+    const rg = RO - 0.12 - (ow * ow) / (8 * RO); // the slot group's radius (see the frame loop)
+    const phi = Math.asin(x / RO);
+    return { position: [x, y, rg - RO * Math.cos(phi) + 0.012] as const, rotation: [0, -phi, 0] as const };
+  }
+  const rg = RI + 0.06;
+  const phi = Math.asin(x / RI);
+  return { position: [RI * Math.sin(phi), y, RI * Math.cos(phi) - rg + 0.012] as const, rotation: [0, phi, 0] as const };
+}
+
 function Corridor({
   slots,
   period,
   ctl,
   autoWalk,
   showLabels,
+  showVisitors,
+  sound,
+  highQuality,
   dark,
   onCurrent,
   onHover,
@@ -282,6 +314,9 @@ function Corridor({
   const pal = PALETTES[dark ? "dark" : "light"];
   const { gl, camera } = useThree();
   const groups = useRef<(THREE.Group | null)[]>([]);
+  const hangs = useRef<(THREE.Group | null)[]>([]);
+  const shadows = useRef<(THREE.Mesh | null)[]>([]);
+  const pools = useRef<(THREE.Mesh | null)[]>([]);
   const lifts = useRef<number[]>(slots.map(() => 0));
   const brightness = useRef<number[]>(slots.map(() => 0));
   const loaded = useRef<boolean[]>(slots.map(() => false));
@@ -305,7 +340,7 @@ function Corridor({
       floor: floorTexture(RI / RO, pal),
       ceiling: ceilingTexture(RI / RO, pal),
       shadow: shadowTexture(),
-      arch: archTexture(pal),
+      pool: poolTexture(),
     }),
     [pal],
   );
@@ -318,12 +353,55 @@ function Corridor({
     () => new THREE.MeshBasicMaterial({ map: tex.shadow, transparent: true, opacity: pal.shadow, depthWrite: false, toneMapped: false }),
     [tex.shadow, pal],
   );
-  const archMat = useMemo(
-    () => new THREE.MeshBasicMaterial({ map: tex.arch, transparent: true, depthWrite: false, toneMapped: false }),
-    [tex.arch],
+  const poolMat = useMemo(
+    () =>
+      new THREE.MeshBasicMaterial({
+        map: tex.pool,
+        color: pal.pool[0],
+        opacity: pal.pool[1],
+        transparent: true,
+        depthWrite: false,
+        toneMapped: false,
+        side: THREE.DoubleSide,
+      }),
+    [tex.pool, pal],
   );
   const artMats = useMemo(
-    () => slots.map((s) => new THREE.MeshBasicMaterial({ color: s.kind === "art" ? "#dcdcda" : "#f6f6f5", toneMapped: false })),
+    () =>
+      slots.map((s) => {
+        if (s.kind !== "art") {
+          // Collection title: lettering on the wall, invisible until its texture is drawn.
+          return new THREE.MeshBasicMaterial({ transparent: true, opacity: 0, depthWrite: false, toneMapped: false });
+        }
+        const m = new THREE.MeshBasicMaterial({ color: "#dcdcda", toneMapped: false });
+        // The picture spot: brightest just above centre, falling off toward the lower corners.
+        m.onBeforeCompile = (sh) => {
+          sh.fragmentShader = sh.fragmentShader.replace(
+            "#include <map_fragment>",
+            `#include <map_fragment>
+            #ifdef USE_MAP
+              vec2 q = (vMapUv - vec2(0.5, 0.64)) * vec2(1.0, 1.15);
+              diffuseColor.rgb *= mix(0.84, 1.04, 1.0 - smoothstep(0.12, 0.9, length(q)));
+            #endif`,
+          );
+        };
+        m.customProgramCacheKey = () => "art-spot";
+        return m;
+      }),
+    [slots],
+  );
+  // Frames, picture lights and the ceiling tracks.
+  const frameMats = useMemo(() => frameMaterials(dark ? 0.82 : 1), [dark]);
+  const frames = useMemo(() => slots.map((s) => buildFrame(s, frameMats)), [slots, frameMats]);
+  const fixture = useMemo(() => fixtureGeometry(), []);
+  const fixtureMat = useMemo(() => litMaterial({ color: pal.fixture, shininess: 30, key: [0, -0.4, 1] }), [pal]);
+  const poolGeos = useMemo(() => slots.map((s) => poolGeometry(s)), [slots]);
+  const poses = useMemo(
+    () =>
+      slots.map((s) => {
+        const wallR = s.wall === "outer" ? RO - 0.12 : RI + 0.06;
+        return fixturePose(s, Math.abs(wallR - TRACK_R[s.wall]));
+      }),
     [slots],
   );
   const labelMats = useMemo(
@@ -384,6 +462,7 @@ function Corridor({
           made.push(t);
           artMats[i].map = t;
           artMats[i].color.set("#ffffff");
+          artMats[i].opacity = 1;
           artMats[i].needsUpdate = true;
         }
       });
@@ -399,13 +478,25 @@ function Corridor({
       Object.values(tex).forEach((t) => t.dispose());
       plane.dispose();
       shadowMat.dispose();
-      archMat.dispose();
+      poolMat.dispose();
       wallMats.outer.dispose();
       wallMats.inner.dispose();
       artMats.forEach((m) => m.dispose());
       labelMats.forEach((m) => m.dispose());
     },
-    [tex, plane, shadowMat, archMat, wallMats, artMats, labelMats],
+    [tex, plane, shadowMat, poolMat, wallMats, artMats, labelMats],
+  );
+  useEffect(() => () => frameMats.dispose(), [frameMats]);
+  useEffect(() => () => frames.forEach((f) => f.forEach((p) => p.geometry.dispose())), [frames]);
+  useEffect(() => () => poolGeos.forEach((g) => g.dispose()), [poolGeos]);
+  useEffect(() => () => fixtureMat.dispose(), [fixtureMat]);
+  useEffect(
+    () => () => {
+      fixture.stem.dispose();
+      fixture.can.dispose();
+      fixture.tracks.forEach((t) => t.dispose());
+    },
+    [fixture],
   );
 
   const startTween = (toPos: THREE.Vector3, toLook: THREE.Vector3, dur: number, done: () => void) => {
@@ -418,6 +509,7 @@ function Corridor({
     const g = groups.current[i];
     if (!g || slot.kind !== "art" || c.mode !== "idle") return;
     c.mode = "focusing";
+    c.focused = i;
     c.target = c.scroll; // stop walking
     c.hover = -1;
     onHover(null);
@@ -467,6 +559,7 @@ function Corridor({
     const bp = basePose(aspect);
     startTween(new THREE.Vector3(bp.pos.x, bp.pos.y, bp.pos.z), new THREE.Vector3(bp.look.x, bp.look.y, bp.look.z), 1000, () => {
       c.mode = "idle";
+      c.focused = -1;
     });
   };
 
@@ -525,6 +618,11 @@ function Corridor({
       const [lo, hi] = VISIBLE[s.wall];
       const visible = theta > lo && theta < hi;
       g.visible = visible;
+      const pool = pools.current[i];
+      if (pool) {
+        pool.visible = visible;
+        pool.rotation.y = theta;
+      }
       if (s.kind === "art") {
         const d = Math.abs(theta - FOCUS[s.wall]) + (s.wall === "inner" ? 0.15 : 0);
         if (d < bestD) {
@@ -538,14 +636,26 @@ function Corridor({
         }
       }
       if (!visible) continue;
-      const lift = (lifts.current[i] = damp(lifts.current[i], c.hover === i ? 0.16 : 0, 9, dt));
+      // Hovered works come off the wall a little; their shadow spreads and softens.
+      const lift = (lifts.current[i] = damp(lifts.current[i], c.hover === i && s.kind === "art" ? 0.14 : 0, 9, dt));
+      const hang = hangs.current[i];
+      if (hang) hang.position.z = lift;
+      const sh = shadows.current[i];
+      if (sh) {
+        const ow = s.w + 2 * frameWidth(s);
+        const oh = s.h + 2 * frameWidth(s);
+        const k = 1 + lift * 0.9;
+        sh.scale.set((ow / SHADOW_INNER) * k, (oh / SHADOW_INNER) * k, 1);
+        sh.position.set(0.04, -0.09 - lift * 0.5, -0.02);
+      }
       if (s.wall === "outer") {
         // Concave wall: pull flat panels in so their edges don't sink into the curve.
-        const r = RO - 0.12 - (s.w * s.w) / (8 * RO) - lift;
+        const ow = s.w + 2 * frameWidth(s);
+        const r = RO - 0.12 - (ow * ow) / (8 * RO);
         g.position.set(r * Math.sin(theta), ART_Y, r * Math.cos(theta));
         g.rotation.y = theta + Math.PI;
       } else {
-        const r = RI + 0.06 + lift;
+        const r = RI + 0.06;
         g.position.set(r * Math.sin(theta), ART_Y, r * Math.cos(theta));
         g.rotation.y = theta;
       }
@@ -554,7 +664,7 @@ function Corridor({
       currentRef.current = best;
       onCurrent(best);
     }
-  });
+  }, -1); // before the visitors, so they read this frame's walk position
 
   const over = (i: number) => (e: ThreeEvent<PointerEvent>) => {
     e.stopPropagation();
@@ -601,35 +711,58 @@ function Corridor({
         <meshBasicMaterial map={tex.ceiling} toneMapped={false} />
       </mesh>
 
-      {slots.map((s, i) => (
-        <group key={s.key} ref={(el) => void (groups.current[i] = el)} visible={false}>
-          {s.wall === "outer" && (
-            <mesh
-              geometry={plane}
-              material={archMat}
-              position={[0, (s.h / 2 + 0.75 - ART_Y) / 2, -0.06]}
-              scale={[s.w + 0.8, s.h / 2 + 0.75 + ART_Y, 1]}
-              renderOrder={-1}
-            />
-          )}
-          <mesh
-            geometry={plane}
-            material={shadowMat}
-            position={[0.07, -0.1, -0.015]}
-            scale={[s.w / SHADOW_INNER, s.h / SHADOW_INNER, 1]}
-          />
-          <mesh geometry={plane} material={artMats[i]} scale={[s.w, s.h, 1]} onPointerOver={over(i)} onPointerOut={out(i)} onClick={click(i)} />
-          {s.kind === "art" && (
-            <mesh
-              geometry={plane}
-              material={labelMats[i]}
-              visible={showLabels}
-              position={[-s.w / 2 + LABEL_W / 2, -s.h / 2 - 0.2 - LABEL_H / 2, 0.002]}
-              scale={[LABEL_W, LABEL_H, 1]}
-            />
-          )}
-        </group>
+      {/* Ceiling tracks for the picture lights. */}
+      {fixture.tracks.map((g, k) => (
+        <mesh key={k} geometry={g} material={fixtureMat} />
       ))}
+
+      {/* Wall wash from each spot — curved to lie on the wall itself. */}
+      {slots.map((s, i) => (
+        <mesh key={`pool-${s.key}`} ref={(el) => void (pools.current[i] = el)} geometry={poolGeos[i]} material={poolMat} visible={false} renderOrder={-2} />
+      ))}
+
+      {slots.map((s, i) => {
+        const fw = frameWidth(s);
+        const pose = poses[i];
+        return (
+          <group key={s.key} ref={(el) => void (groups.current[i] = el)} visible={false}>
+            <mesh geometry={fixture.stem} material={fixtureMat} position={pose.stem} />
+            <mesh geometry={fixture.can} material={fixtureMat} position={pose.canPos} quaternion={pose.q} />
+            {s.kind === "art" && (
+              <mesh
+                ref={(el) => void (shadows.current[i] = el)}
+                geometry={plane}
+                material={shadowMat}
+                renderOrder={-1}
+                position={[0.04, -0.09, -0.02]}
+                scale={[(s.w + 2 * fw) / SHADOW_INNER, (s.h + 2 * fw) / SHADOW_INNER, 1]}
+              />
+            )}
+            <group ref={(el) => void (hangs.current[i] = el)}>
+              {frames[i].map((p, k) => (
+                <mesh key={k} geometry={p.geometry} material={p.material} position={[0, 0, p.z]} />
+              ))}
+              <mesh
+                geometry={plane}
+                material={artMats[i]}
+                position={[0, 0, s.kind === "art" ? 0 : -0.1]}
+                scale={[s.w, s.h, 1]}
+                onPointerOver={over(i)}
+                onPointerOut={out(i)}
+                onClick={click(i)}
+              />
+            </group>
+            {s.kind === "art" && (
+              <group visible={showLabels} {...labelPose(s, fw)}>
+                <mesh geometry={plane} material={shadowMat} position={[0.008, -0.012, -0.004]} scale={[LABEL_W / SHADOW_INNER * 0.97, LABEL_H / SHADOW_INNER * 0.9, 1]} />
+                <mesh geometry={plane} material={labelMats[i]} scale={[LABEL_W, LABEL_H, 1]} />
+              </group>
+            )}
+          </group>
+        );
+      })}
+
+      {showVisitors && <Visitors slots={slots} period={period} ctl={ctl} groups={groups} pal={pal} density={highQuality ? 1 : 0.6} audio={sound ? peekGalleryAudio() : null} />}
     </>
   );
 }

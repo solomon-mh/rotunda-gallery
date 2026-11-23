@@ -269,6 +269,14 @@ p {
 .circle-btn:active {
   transform: scale(0.94);
 }
+.circle-btn.is-on {
+  background: var(--ink);
+  border-color: var(--ink);
+  color: var(--paper);
+}
+.walk-controls .circle-btn[aria-pressed] {
+  margin-right: 6px;
+}
 
 .choice {
   min-height: 32px;

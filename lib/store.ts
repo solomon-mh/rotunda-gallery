@@ -21,6 +21,8 @@ type Settings = {
   theme: ThemePref;
   autoWalk: boolean;
   showLabels: boolean;
+  showVisitors: boolean;
+  sound: boolean;
   highQuality: boolean;
 };
 
@@ -59,7 +61,7 @@ export const useStore = create<State>()(
       items: [],
       saved: [],
       currency: "USD",
-      settings: { theme: "light", autoWalk: false, showLabels: true, highQuality: true },
+      settings: { theme: "light", autoWalk: false, showLabels: true, showVisitors: true, sound: false, highQuality: true },
       cartOpen: false,
       searchOpen: false,
       view: "gallery",

@@ -23,7 +23,12 @@ export type Palette = {
   wall: [bottom: string, contact: string, main: string, top: string];
   floor: [wallEdge: string, mid: string];
   ceiling: [wallEdge: string, mid: string];
-  arch: string;
+  /** Warm pool of light thrown on the wall by each picture spot. */
+  pool: [color: string, opacity: number];
+  /** Track & spot-can colour. */
+  fixture: string;
+  /** Overall brightness of the visitors (they're lit like the room). */
+  figure: number;
   card: string;
   cardLine: string;
   text: string;
@@ -38,10 +43,12 @@ export const PALETTES: Record<"light" | "dark", Palette> = {
   light: {
     bg: "#f2f2f1",
     fog: "#f0f0ef",
-    wall: ["#dededd", "#efefee", "#f8f8f7", "#f4f4f3"],
+    wall: ["#d9d9d7", "#e9e9e7", "#f1f1ef", "#ececea"],
     floor: ["#cacac9", "#dbdbda"],
     ceiling: ["#ececeb", "#f6f6f5"],
-    arch: "rgba(0,0,0,0.055)",
+    pool: ["#fff7e8", 0.9],
+    fixture: "#2b2b2a",
+    figure: 1,
     card: "#fbfbfa",
     cardLine: "rgba(0,0,0,0.06)",
     text: "#151515",
@@ -57,7 +64,9 @@ export const PALETTES: Record<"light" | "dark", Palette> = {
     wall: ["#1c1c1b", "#2c2c2b", "#3c3c3a", "#363635"],
     floor: ["#171716", "#242423"],
     ceiling: ["#262625", "#2e2e2d"],
-    arch: "rgba(255,255,255,0.05)",
+    pool: ["#f3e3c4", 0.2],
+    fixture: "#121212",
+    figure: 0.62,
     card: "#262625",
     cardLine: "rgba(255,255,255,0.06)",
     text: "#ededeb",
@@ -111,27 +120,34 @@ export function ceilingTexture(ri: number, p: Palette) {
 }
 
 /**
- * The shallow arched alcove behind each work on the outer wall: just a soft,
- * barely-there contour in the same paint — no contrast against the wall.
+ * The scallop of light a ceiling spot throws on the wall: an ellipse that's brightest
+ * just above the work and falls off softly. Drawn white; tinted by the material.
  */
-export function archTexture(p: Palette) {
+export function poolTexture() {
   const W = 256;
   const H = 512;
   const [c, ctx] = canvas(W, H);
-  const pad = 22;
-  const r = W / 2 - pad;
-  const off = 2000;
-  ctx.shadowColor = p.arch;
-  ctx.shadowBlur = 10;
-  ctx.shadowOffsetX = off;
-  ctx.lineWidth = 7;
-  ctx.strokeStyle = "#000";
-  ctx.beginPath();
-  ctx.moveTo(pad - off, H + 20);
-  ctx.lineTo(pad - off, r + pad);
-  ctx.arc(W / 2 - off, r + pad, r, Math.PI, 0);
-  ctx.lineTo(W - pad - off, H + 20);
-  ctx.stroke();
+  ctx.translate(W / 2, H * 0.42);
+  ctx.scale(1, H / W);
+  const g = ctx.createRadialGradient(0, 0, 0, 0, 0, W / 2);
+  g.addColorStop(0, "rgba(255,255,255,1)");
+  g.addColorStop(0.45, "rgba(255,255,255,0.82)");
+  g.addColorStop(0.78, "rgba(255,255,255,0.28)");
+  g.addColorStop(1, "rgba(255,255,255,0)");
+  ctx.fillStyle = g;
+  ctx.fillRect(-W / 2, -W / 2, W, W);
+  return toTexture(c);
+}
+
+/** Soft round contact shadow under a visitor's feet. */
+export function footShadowTexture() {
+  const [c, ctx] = canvas(128, 128);
+  const g = ctx.createRadialGradient(64, 64, 0, 64, 64, 64);
+  g.addColorStop(0, "rgba(0,0,0,0.75)");
+  g.addColorStop(0.45, "rgba(0,0,0,0.35)");
+  g.addColorStop(1, "rgba(0,0,0,0)");
+  ctx.fillStyle = g;
+  ctx.fillRect(0, 0, 128, 128);
   return toTexture(c);
 }
 
@@ -175,35 +191,31 @@ function fitText(ctx: CanvasRenderingContext2D, text: string, maxW: number) {
   return t + "…";
 }
 
-/** Wall caption: artist, italic title, mono collection — like a museum label. */
+/** Wall caption: a small museum label hung beside the frame. */
 export function labelTexture(art: Artwork, collection: Collection, f: Fonts, p: Palette) {
   const W = 720;
-  const H = 260;
+  const H = 300;
   const [c, ctx] = canvas(W, H);
   ctx.fillStyle = p.card;
   ctx.fillRect(0, 0, W, H);
-  ctx.strokeStyle = p.cardLine;
-  ctx.lineWidth = 2;
-  ctx.strokeRect(1, 1, W - 2, H - 2);
   ctx.fillStyle = p.text;
   ctx.textBaseline = "alphabetic";
-  ctx.font = `44px ${f.serif}`;
-  ctx.fillText(fitText(ctx, art.artist, W - 64), 32, 72);
-  ctx.font = `italic 44px ${f.serif}`;
-  ctx.fillText(fitText(ctx, art.title, W - 64), 32, 128);
+  ctx.font = `600 50px ${f.serif}`;
+  ctx.fillText(fitText(ctx, art.artist, W - 80), 40, 84);
+  ctx.font = `italic 50px ${f.serif}`;
+  ctx.fillText(fitText(ctx, `${art.title}, ${art.year}`, W - 80), 40, 148);
   ctx.fillStyle = p.muted;
-  ctx.font = `22px ${f.mono}`;
-  ctx.fillText(fitText(ctx, `${art.year.toUpperCase()}  ·  ${collection.name.toUpperCase()}`, W - 64), 32, 200);
+  ctx.font = `24px ${f.mono}`;
+  ctx.fillText(fitText(ctx, art.medium.toUpperCase(), W - 80), 40, 214);
+  ctx.fillText(fitText(ctx, collection.name.toUpperCase(), W - 80), 40, 254);
   return toTexture(c);
 }
 
-/** The collection title panel that opens each section of the hang. */
+/** The collection title, lettered on the wall where each section of the hang begins. */
 export function placardTexture(collection: Collection, count: number, f: Fonts, p: Palette) {
   const W = 740;
   const H = 1000;
-  const [c, ctx] = canvas(W, H);
-  ctx.fillStyle = p.card;
-  ctx.fillRect(0, 0, W, H);
+  const [c, ctx] = canvas(W, H); // transparent: the lettering sits straight on the wall
   ctx.fillStyle = p.muted;
   ctx.font = `22px ${f.mono}`;
   ctx.fillText(`COLLECTION ${collection.number}`, 56, 92);
