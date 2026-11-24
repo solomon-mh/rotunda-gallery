@@ -25,4 +25,5 @@ npm run build && npm start
 ## Credits
 
 All paintings are public-domain works; images are museum reproductions from Wikimedia Commons.
+Background music (Satie, Debussy, Chopin, Bach) is public-domain / CC0 recordings from Wikimedia Commons — see [public/music/CREDITS.md](public/music/CREDITS.md).
 Checkout, auctions and sign-in are demos — no payments are taken.

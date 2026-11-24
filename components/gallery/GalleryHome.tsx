@@ -12,6 +12,7 @@ import type { SceneHandle } from "./RotundaScene";
 import ListView from "./ListView";
 import { ArrowLeft, ArrowRight, SoundIcon } from "../icons";
 import { getGalleryAudio, peekGalleryAudio } from "./ambience";
+import MusicControl from "./MusicControl";
 
 const RotundaScene = dynamic(() => import("./RotundaScene"), { ssr: false });
 
@@ -172,6 +173,7 @@ export default function GalleryHome() {
         </div>
 
         <div className={`walk-controls${modalOpen ? " is-hidden" : ""}`}>
+          <MusicControl hidden={modalOpen} />
           <button
             className={`circle-btn${soundOn ? " is-on" : ""}`}
             onClick={toggleSound}

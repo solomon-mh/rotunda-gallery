@@ -117,6 +117,40 @@ export const SoundIcon = ({ size, muted, ...p }: P & { muted?: boolean }) => (
   </svg>
 );
 
+export const MusicIcon = ({ size, ...p }: P) => (
+  <svg {...base(size)} {...p}>
+    <path d="M9 17.5V6l10-2v11.5" />
+    <circle cx="6.5" cy="17.5" r="2.5" />
+    <circle cx="16.5" cy="15.5" r="2.5" />
+  </svg>
+);
+
+export const PlayIcon = ({ size, ...p }: P) => (
+  <svg {...base(size)} {...p}>
+    <path d="M8 5.5v13l10.5-6.5z" fill="currentColor" />
+  </svg>
+);
+
+export const PauseIcon = ({ size, ...p }: P) => (
+  <svg {...base(size)} {...p}>
+    <path d="M8.5 5.5v13M15.5 5.5v13" strokeWidth={2.6} />
+  </svg>
+);
+
+export const SkipBack = ({ size, ...p }: P) => (
+  <svg {...base(size)} {...p}>
+    <path d="M18 6v12l-9-6z" fill="currentColor" />
+    <path d="M6 6v12" />
+  </svg>
+);
+
+export const SkipForward = ({ size, ...p }: P) => (
+  <svg {...base(size)} {...p}>
+    <path d="M6 6v12l9-6z" fill="currentColor" />
+    <path d="M18 6v12" />
+  </svg>
+);
+
 export const MenuIcon = ({ size, ...p }: P) => (
   <svg {...base(size)} {...p}>
     <path d="M4 7h16M4 12h16M4 17h16" />
