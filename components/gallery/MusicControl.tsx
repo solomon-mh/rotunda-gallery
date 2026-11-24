@@ -6,7 +6,7 @@ import { useStore } from "@/lib/store";
 import { MusicIcon, PauseIcon, PlayIcon, SkipBack, SkipForward, SoundIcon } from "../icons";
 import { TRACKS, getMusic, type MusicSnapshot } from "./music";
 
-const SERVER: MusicSnapshot = { index: 0, on: false, playing: false, volume: 0.6, time: 0, duration: 0 };
+const SERVER: MusicSnapshot = { index: 0, on: false, playing: false, volume: 0.8, time: 0, duration: 0 };
 const noop = () => () => {};
 
 const clock = (s: number) => {
@@ -25,7 +25,7 @@ export default function MusicControl({ hidden }: { hidden: boolean }) {
   const [open, setOpen] = useState(false);
   const panelId = useId();
   const root = useRef<HTMLDivElement>(null);
-  const lastVolume = useRef(settings.musicVolume || 0.6);
+  const lastVolume = useRef(settings.musicVolume || 0.8);
 
   const player = typeof window === "undefined" ? null : getMusic();
   const m = useSyncExternalStore(player?.subscribe ?? noop, player?.getSnapshot ?? (() => SERVER), () => SERVER);
@@ -33,30 +33,35 @@ export default function MusicControl({ hidden }: { hidden: boolean }) {
 
   // Restore the saved track and volume; resume if music was left on. Browsers only
   // allow audio after a user gesture, so a blocked start retries on the first click or key.
+  // Saved settings load from localStorage after the first render, so wait for them.
   useEffect(() => {
     const p = getMusic();
-    p.cue(Math.min(settings.musicTrack, TRACKS.length - 1));
-    p.setVolume(settings.musicVolume);
     let cancelled = false;
     const wake = () => {
       if (!cancelled && useStore.getState().settings.music) void p.play();
     };
-    if (settings.music) {
+    const start = () => {
+      if (cancelled) return;
+      const saved = useStore.getState().settings;
+      p.cue(Math.min(saved.musicTrack, TRACKS.length - 1));
+      p.setVolume(saved.musicVolume);
+      if (!saved.music) return;
       void p.play().then((ok) => {
         if (ok || cancelled) return;
         window.addEventListener("pointerdown", wake, { once: true });
         window.addEventListener("keydown", wake, { once: true });
       });
-    }
+    };
+    const unsub = useStore.persist.hasHydrated() ? undefined : useStore.persist.onFinishHydration(start);
+    if (!unsub) start();
     return () => {
       cancelled = true;
+      unsub?.();
       window.removeEventListener("pointerdown", wake);
       window.removeEventListener("keydown", wake);
       // Leaving the gallery: fade out; the saved setting brings it back next visit.
       p.pause(false);
     };
-    // Only on mount — later changes go through the handlers below.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // Keep the saved track in step when the playlist advances on its own.
@@ -101,7 +106,7 @@ export default function MusicControl({ hidden }: { hidden: boolean }) {
     setSetting("musicVolume", v);
     if (v > 0) lastVolume.current = v;
   };
-  const toggleMute = () => setVolume(m.volume > 0 ? 0 : lastVolume.current || 0.6);
+  const toggleMute = () => setVolume(m.volume > 0 ? 0 : lastVolume.current || 0.8);
 
   const progress = m.duration > 0 ? Math.min(1, m.time / m.duration) : 0;
   const muted = m.volume === 0;

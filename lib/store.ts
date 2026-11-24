@@ -65,7 +65,7 @@ export const useStore = create<State>()(
       items: [],
       saved: [],
       currency: "USD",
-      settings: { theme: "light", autoWalk: false, showLabels: true, showVisitors: true, sound: false, music: false, musicVolume: 0.6, musicTrack: 0, highQuality: true },
+      settings: { theme: "light", autoWalk: false, showLabels: true, showVisitors: true, sound: false, music: false, musicVolume: 0.8, musicTrack: 0, highQuality: true },
       cartOpen: false,
       searchOpen: false,
       view: "gallery",

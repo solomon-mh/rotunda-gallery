@@ -38,10 +38,12 @@ class MusicPlayer {
   private el: HTMLAudioElement;
   private ctx: AudioContext | null = null;
   private gain: GainNode | null = null;
+  /** Web Audio couldn't be set up — use the element's own volume instead. */
+  private fallback = false;
   private listeners = new Set<() => void>();
   private pauseTimer = 0;
   private failures = 0;
-  private state: MusicSnapshot = { index: 0, on: false, playing: false, volume: 0.6, time: 0, duration: 0 };
+  private state: MusicSnapshot = { index: 0, on: false, playing: false, volume: 0.8, time: 0, duration: 0 };
 
   constructor() {
     const el = (this.el = new Audio());
@@ -51,6 +53,9 @@ class MusicPlayer {
     el.addEventListener("playing", () => {
       this.failures = 0;
       this.set({ playing: true });
+      // Fade in whenever sound actually starts (first play, next track, after buffering) —
+      // a play() promise can be cut short by a track change and never get to it.
+      if (this.state.on && (!this.ctx || this.ctx.state === "running")) this.ramp(this.state.volume, FADE_IN);
     });
     el.addEventListener("pause", () => this.set({ playing: false }));
     el.addEventListener("timeupdate", () => this.set({ time: el.currentTime }));
@@ -76,29 +81,34 @@ class MusicPlayer {
 
   /** Build the Web Audio graph lazily, inside a user gesture. */
   private graph() {
-    if (this.ctx) return;
+    if (this.ctx || this.fallback) return;
     try {
       const ctx = new AudioContext();
       this.gain = new GainNode(ctx, { gain: 0 });
       new MediaElementAudioSourceNode(ctx, { mediaElement: this.el }).connect(this.gain).connect(ctx.destination);
       this.ctx = ctx;
+      // The element's own volume still scales what reaches the graph, so keep it at full.
+      this.el.volume = 1;
+      this.el.muted = false;
     } catch {
-      // No Web Audio: fall back to the element's own volume.
       this.ctx = null;
       this.gain = null;
+      this.fallback = true;
     }
   }
 
   private ramp(to: number, seconds: number) {
+    // Perceived loudness is closer to the square of the slider position.
+    const level = to * to;
     if (this.ctx && this.gain) {
       const t = this.ctx.currentTime;
       this.gain.gain.cancelScheduledValues(t);
       this.gain.gain.setValueAtTime(this.gain.gain.value, t);
-      // Perceived loudness is closer to the square of the slider position.
-      this.gain.gain.linearRampToValueAtTime(to * to, t + seconds);
-    } else {
-      this.el.volume = to * to;
+      this.gain.gain.linearRampToValueAtTime(level, t + seconds);
+    } else if (this.fallback) {
+      this.el.volume = level;
     }
+    // Neither: nothing has played yet, so there is nothing to fade.
   }
 
   /** Start playing. Resolves false if the browser is still blocking autoplay. */
@@ -106,11 +116,18 @@ class MusicPlayer {
     window.clearTimeout(this.pauseTimer);
     this.set({ on: true });
     this.graph();
-    if (this.ctx?.state === "suspended") void this.ctx.resume();
+    const resumed = this.ctx && this.ctx.state !== "running" ? this.ctx.resume().catch(() => {}) : null;
     if (this.el.preload === "none") this.el.preload = "auto";
     try {
       await this.el.play();
     } catch {
+      return false;
+    }
+    if (resumed) await Promise.race([resumed, new Promise((r) => setTimeout(r, 300))]);
+    if (this.ctx && this.ctx.state !== "running") {
+      // The element may play without a gesture while Web Audio stays locked —
+      // that would be silent, so hold off until the next click or key press.
+      this.el.pause();
       return false;
     }
     if (!this.state.on) {
