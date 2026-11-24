@@ -15,7 +15,8 @@ const ROOM_W = 500;
 const ROOM_H = 325;
 const FLOOR_Y = 252; // where the wall meets the skirting
 const SNAP = 4; // cm
-const PANEL_W = 300; // floating panel width (desktop) — the room centres in the space left of it
+// The options panel floats over the room, so opening or folding it never moves anything.
+const MOBILE_BAR = 64; // px: the folded options bar on small screens; the room stands just above it
 const CLOSE_ZONE = 58; // px: the close button (14px inset + 36px) plus a little breathing room
 
 const WALLS = [
@@ -65,21 +66,21 @@ export default function ViewInRoom({ art, options, price, onOptions, onAdd, onCl
   const [snapX, setSnapX] = useState(false);
   // Minimised: the panel folds into a slim bar so the whole wall is free to hang on.
   const [collapsed, setCollapsed] = useState(false);
-  const [reflowing, setReflowing] = useState(false);
   const toggleRef = useRef<HTMLButtonElement>(null);
   const sceneRef = useRef<HTMLDivElement>(null);
   const drag = useRef<{ id: number; dx: number; dy: number } | null>(null);
 
   // Viewport → room mapping.
   const desktop = view.w > 900;
-  const usableW = view.w - (desktop && !collapsed ? PANEL_W + 24 : 0);
-  const scale = Math.min(view.h / ROOM_H, usableW / (ROOM_W * 0.74));
+  const usableW = view.w;
+  const bottomInset = desktop ? 0 : MOBILE_BAR;
+  const scale = Math.min((view.h - bottomInset) / ROOM_H, usableW / (ROOM_W * 0.74));
   const originX = usableW / 2 - (ROOM_W / 2) * scale;
-  const originY = view.h - ROOM_H * scale - (desktop ? 0 : 0);
+  const originY = view.h - bottomInset - ROOM_H * scale;
   const X = (cm: number) => originX + cm * scale;
   const Y = (cm: number) => originY + cm * scale;
   const px = (cm: number) => cm * scale;
-  // Visible wall in cm (the part not under the panel).
+  // Visible wall in cm.
   const visMinX = -originX / scale;
   const visMaxX = (usableW - originX) / scale;
   const visMinY = -originY / scale;
@@ -94,18 +95,16 @@ export default function ViewInRoom({ art, options, price, onOptions, onAdd, onCl
   const outH = imgH + 2 * (frame + mat);
   const frameHex = FRAME_COLORS.find((c) => c.id === options.frameColor)!.hex;
 
-  // The close button sits over the wall's top-right corner unless the full panel is beside it.
-  const closeOverWall = !(desktop && !collapsed);
   const clamp = useCallback(
     (p: { x: number; y: number }) => {
       const x = Math.min(visMaxX - outW / 2 - 6, Math.max(visMinX + outW / 2 + 6, p.x));
       let y = Math.max(visMinY + outH / 2 + 8, p.y);
       // Tuck the print under the close button rather than behind it, so it can always be grabbed.
       const cz = CLOSE_ZONE / scale;
-      if (closeOverWall && x + outW / 2 > visMaxX - cz) y = Math.max(y, visMinY + cz + outH / 2);
+      if (x + outW / 2 > visMaxX - cz) y = Math.max(y, visMinY + cz + outH / 2);
       return { x, y: Math.min(FLOOR_Y - outH / 2 - 4, y) };
     },
-    [outW, outH, visMinX, visMaxX, visMinY, scale, closeOverWall],
+    [outW, outH, visMinX, visMaxX, visMinY, scale],
   );
   const defaultPos = useCallback(
     (r = room) => clamp({ x: ROOM_W / 2, y: r.top - 22 - outH / 2 }),
@@ -175,14 +174,7 @@ export default function ViewInRoom({ art, options, price, onOptions, onAdd, onCl
 
   const toggleCollapsed = () => {
     setCollapsed((c) => !c);
-    // Let the room glide to its new layout rather than jump.
-    setReflowing(true);
   };
-  useEffect(() => {
-    if (!reflowing) return;
-    const t = setTimeout(() => setReflowing(false), 480);
-    return () => clearTimeout(t);
-  }, [reflowing]);
   // The toggle is re-rendered in a new place; keep keyboard focus on it.
   const toggled = useRef(false);
   useEffect(() => {
@@ -210,7 +202,7 @@ export default function ViewInRoom({ art, options, price, onOptions, onAdd, onCl
       >
         <div
           ref={sceneRef}
-          className={`room__scene${dark ? " is-dark" : ""}${dragging ? " is-dragging" : ""}${reflowing ? " is-reflowing" : ""}`}
+          className={`room__scene${dark ? " is-dark" : ""}${dragging ? " is-dragging" : ""}`}
           style={{ ["--wall" as string]: wall.hex }}
         >
           <div className="room__wall" style={{ height: Y(FLOOR_Y) }} />
@@ -262,7 +254,7 @@ export default function ViewInRoom({ art, options, price, onOptions, onAdd, onCl
           <p className="room__hint mono-xxs">
             <span className="room__hint-dot" aria-hidden="true" /> Drag the print anywhere · double-click to re-centre
           </p>
-          <p className="room__note mono-xxs" style={desktop && collapsed ? { left: 16 } : { right: desktop ? PANEL_W + 40 : 14 }}>
+          <p className="room__note mono-xxs" style={desktop ? { left: 16 } : { right: 14, bottom: MOBILE_BAR + 10 }}>
             {room.note}
           </p>
         </div>

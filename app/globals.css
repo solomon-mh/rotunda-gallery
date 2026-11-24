@@ -1930,15 +1930,6 @@ kbd {
   padding: 0 16px;
   white-space: nowrap;
 }
-/* While the panel folds, let the room glide to its new layout. */
-.room__scene.is-reflowing :is(.room__art, .room__glow, .room__furn, .room__wall, .room__floor, .room__skirting) {
-  transition:
-    left 0.45s var(--ease-out),
-    top 0.45s var(--ease-out),
-    width 0.45s var(--ease-out),
-    height 0.45s var(--ease-out),
-    background-color 0.5s var(--ease-out);
-}
 
 /* ───────────────────────── Pages ───────────────────────── */
 .page {
@@ -2575,27 +2566,23 @@ kbd {
   .room {
     inset: 0;
     border-radius: 0;
-    display: flex;
-    flex-direction: column;
   }
-  .room__scene {
-    position: relative;
-    inset: auto;
-    flex: 1;
-    min-height: 0;
-  }
+  /* A bottom sheet floating over the room. */
   .room__panel {
-    position: relative;
-    right: auto;
+    left: 0;
+    right: 0;
     top: auto;
+    bottom: 0;
     translate: none;
     width: auto;
-    border-radius: 0;
+    max-height: 72%;
+    overflow-y: auto;
+    border-radius: 14px 14px 0 0;
     border: 0;
     border-top: 1px solid var(--line);
     background: var(--paper);
-    box-shadow: none;
-    padding: 14px 16px 18px;
+    box-shadow: 0 -18px 40px -24px rgba(0, 0, 0, 0.35);
+    padding: 14px 16px calc(18px + env(safe-area-inset-bottom));
     grid-template-columns: 1fr 1fr;
     gap: 10px 14px;
   }
@@ -2615,8 +2602,9 @@ kbd {
     right: 8px;
   }
   .room__panel.is-collapsed {
-    bottom: auto;
+    bottom: 0;
     max-width: none;
+    border-radius: 0;
     padding: 10px 16px calc(10px + env(safe-area-inset-bottom));
   }
   .room__mini-id {
