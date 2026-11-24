@@ -4,7 +4,7 @@ import { motion } from "motion/react";
 import type { Artwork } from "@/lib/artworks";
 import { FRAME_COLORS, SIZES, formatPrice, type FrameId, type PrintOptions } from "@/lib/pricing";
 import { useStore } from "@/lib/store";
-import { CloseIcon } from "../icons";
+import { ChevronDown, CloseIcon } from "../icons";
 
 /*
  * The room is modelled in centimetres: a 500 × 325 cm slice of wall and floor,
@@ -16,6 +16,7 @@ const ROOM_H = 325;
 const FLOOR_Y = 252; // where the wall meets the skirting
 const SNAP = 4; // cm
 const PANEL_W = 300; // floating panel width (desktop) — the room centres in the space left of it
+const CLOSE_ZONE = 58; // px: the close button (14px inset + 36px) plus a little breathing room
 
 const WALLS = [
   { id: "plaster", label: "Warm plaster", hex: "#e8e2d8" },
@@ -62,12 +63,16 @@ export default function ViewInRoom({ art, options, price, onOptions, onAdd, onCl
   const [view, setView] = useState({ w: 1200, h: 800 });
   const [dragging, setDragging] = useState(false);
   const [snapX, setSnapX] = useState(false);
+  // Minimised: the panel folds into a slim bar so the whole wall is free to hang on.
+  const [collapsed, setCollapsed] = useState(false);
+  const [reflowing, setReflowing] = useState(false);
+  const toggleRef = useRef<HTMLButtonElement>(null);
   const sceneRef = useRef<HTMLDivElement>(null);
   const drag = useRef<{ id: number; dx: number; dy: number } | null>(null);
 
   // Viewport → room mapping.
   const desktop = view.w > 900;
-  const usableW = view.w - (desktop ? PANEL_W + 24 : 0);
+  const usableW = view.w - (desktop && !collapsed ? PANEL_W + 24 : 0);
   const scale = Math.min(view.h / ROOM_H, usableW / (ROOM_W * 0.74));
   const originX = usableW / 2 - (ROOM_W / 2) * scale;
   const originY = view.h - ROOM_H * scale - (desktop ? 0 : 0);
@@ -89,12 +94,18 @@ export default function ViewInRoom({ art, options, price, onOptions, onAdd, onCl
   const outH = imgH + 2 * (frame + mat);
   const frameHex = FRAME_COLORS.find((c) => c.id === options.frameColor)!.hex;
 
+  // The close button sits over the wall's top-right corner unless the full panel is beside it.
+  const closeOverWall = !(desktop && !collapsed);
   const clamp = useCallback(
-    (p: { x: number; y: number }) => ({
-      x: Math.min(visMaxX - outW / 2 - 6, Math.max(visMinX + outW / 2 + 6, p.x)),
-      y: Math.min(FLOOR_Y - outH / 2 - 4, Math.max(visMinY + outH / 2 + 8, p.y)),
-    }),
-    [outW, outH, visMinX, visMaxX, visMinY],
+    (p: { x: number; y: number }) => {
+      const x = Math.min(visMaxX - outW / 2 - 6, Math.max(visMinX + outW / 2 + 6, p.x));
+      let y = Math.max(visMinY + outH / 2 + 8, p.y);
+      // Tuck the print under the close button rather than behind it, so it can always be grabbed.
+      const cz = CLOSE_ZONE / scale;
+      if (closeOverWall && x + outW / 2 > visMaxX - cz) y = Math.max(y, visMinY + cz + outH / 2);
+      return { x, y: Math.min(FLOOR_Y - outH / 2 - 4, y) };
+    },
+    [outW, outH, visMinX, visMaxX, visMinY, scale, closeOverWall],
   );
   const defaultPos = useCallback(
     (r = room) => clamp({ x: ROOM_W / 2, y: r.top - 22 - outH / 2 }),
@@ -162,6 +173,23 @@ export default function ViewInRoom({ art, options, price, onOptions, onAdd, onCl
     setPos((p) => clamp({ x: p.x + d[0], y: p.y + d[1] }));
   };
 
+  const toggleCollapsed = () => {
+    setCollapsed((c) => !c);
+    // Let the room glide to its new layout rather than jump.
+    setReflowing(true);
+  };
+  useEffect(() => {
+    if (!reflowing) return;
+    const t = setTimeout(() => setReflowing(false), 480);
+    return () => clearTimeout(t);
+  }, [reflowing]);
+  // The toggle is re-rendered in a new place; keep keyboard focus on it.
+  const toggled = useRef(false);
+  useEffect(() => {
+    if (toggled.current) toggleRef.current?.focus();
+    toggled.current = true;
+  }, [collapsed]);
+
   const pickRoom = (r: (typeof ROOMS)[number]) => {
     setRoom(r);
     setPos(defaultPos(r));
@@ -182,7 +210,7 @@ export default function ViewInRoom({ art, options, price, onOptions, onAdd, onCl
       >
         <div
           ref={sceneRef}
-          className={`room__scene${dark ? " is-dark" : ""}${dragging ? " is-dragging" : ""}`}
+          className={`room__scene${dark ? " is-dark" : ""}${dragging ? " is-dragging" : ""}${reflowing ? " is-reflowing" : ""}`}
           style={{ ["--wall" as string]: wall.hex }}
         >
           <div className="room__wall" style={{ height: Y(FLOOR_Y) }} />
@@ -234,7 +262,7 @@ export default function ViewInRoom({ art, options, price, onOptions, onAdd, onCl
           <p className="room__hint mono-xxs">
             <span className="room__hint-dot" aria-hidden="true" /> Drag the print anywhere · double-click to re-centre
           </p>
-          <p className="room__note mono-xxs" style={{ right: desktop ? PANEL_W + 40 : 14 }}>
+          <p className="room__note mono-xxs" style={desktop && collapsed ? { left: 16 } : { right: desktop ? PANEL_W + 40 : 14 }}>
             {room.note}
           </p>
         </div>
@@ -243,96 +271,117 @@ export default function ViewInRoom({ art, options, price, onOptions, onAdd, onCl
           <CloseIcon size={16} />
         </button>
 
-        <aside className="room__panel">
-          <div className="room__id">
-            <p className="mono-xxs muted">View in room</p>
-            <h2 className="display room__title">{art.title}</h2>
-            <p className="serif room__artist">
-              {art.artist}, {art.year}
-            </p>
-          </div>
-
-          <div className="room__row">
-            <span className="mono-xxs muted">Room</span>
-            <div className="seg">
-              {ROOMS.map((r) => (
-                <button key={r.id} className={r.id === room.id ? "is-on" : ""} onClick={() => pickRoom(r)} aria-pressed={r.id === room.id}>
-                  {r.label}
-                </button>
-              ))}
-            </div>
-          </div>
-
-          <div className="room__row">
-            <span className="mono-xxs muted">Size</span>
-            <div className="seg">
-              {SIZES.map((s) => (
-                <button
-                  key={s.id}
-                  className={s.id === options.size ? "is-on" : ""}
-                  onClick={() => onOptions({ size: s.id })}
-                  aria-pressed={s.id === options.size}
-                  title={s.label}
-                >
-                  {s.id.toUpperCase()}
-                </button>
-              ))}
-            </div>
-          </div>
-
-          <div className="room__row">
-            <span className="mono-xxs muted">Frame</span>
-            <div className="seg">
-              {FRAME_OPTS.map((f) => (
-                <button key={f.id} className={f.id === options.frame ? "is-on" : ""} onClick={() => onOptions({ frame: f.id })} aria-pressed={f.id === options.frame}>
-                  {f.label}
-                </button>
-              ))}
-            </div>
-          </div>
-
-          <div className="room__swatches">
-            <div>
-              <span className="mono-xxs muted">Wall</span>
-              <div className="room__dots">
-                {WALLS.map((w) => (
-                  <button
-                    key={w.id}
-                    className={`dot-swatch${w.id === wall.id ? " is-on" : ""}`}
-                    style={{ background: w.hex }}
-                    onClick={() => setWall(w)}
-                    aria-label={`${w.label} wall`}
-                    title={w.label}
-                  />
-                ))}
+        <aside className={`room__panel${collapsed ? " is-collapsed" : ""}`} aria-label="Print options">
+          {collapsed ? (
+            <div className="room__mini">
+              <div className="room__mini-id">
+                <p className="mono-xxs muted room__mini-title">{art.title}</p>
+                <p className="display room__mini-price">{formatPrice(price, currency)}</p>
               </div>
+              <button className="btn btn--black" onClick={onAdd}>
+                Add to bag
+              </button>
+              <button ref={toggleRef} className="room__fold room__fold--open" onClick={toggleCollapsed} aria-expanded={false} aria-label="Show print options">
+                <span className="mono-xxs">Options</span>
+                <ChevronDown size={13} />
+              </button>
             </div>
-            <div className={options.frame === "unframed" ? "is-disabled" : undefined}>
-              <span className="mono-xxs muted">Finish</span>
-              <div className="room__dots">
-                {FRAME_COLORS.map((c) => (
-                  <button
-                    key={c.id}
-                    className={`dot-swatch${c.id === options.frameColor && options.frame !== "unframed" ? " is-on" : ""}`}
-                    style={{ background: c.hex }}
-                    onClick={() => onOptions({ frameColor: c.id, frame: options.frame === "unframed" ? "classic" : options.frame })}
-                    aria-label={`${c.label} frame`}
-                    title={c.label}
-                  />
-                ))}
+          ) : (
+            <>
+              <button ref={toggleRef} className="room__fold" onClick={toggleCollapsed} aria-expanded={true} aria-label="Minimise options to move the print freely" title="Minimise">
+                <ChevronDown size={15} />
+              </button>
+              <div className="room__id">
+                <p className="mono-xxs muted">View in room</p>
+                <h2 className="display room__title">{art.title}</h2>
+                <p className="serif room__artist">
+                  {art.artist}, {art.year}
+                </p>
               </div>
-            </div>
-          </div>
 
-          <div className="room__buy">
-            <div>
-              <p className="display room__price">{formatPrice(price, currency)}</p>
-              <p className="mono-xxs muted">{size.short}</p>
-            </div>
-            <button className="btn btn--black" onClick={onAdd}>
-              Add to bag
-            </button>
-          </div>
+              <div className="room__row">
+                <span className="mono-xxs muted">Room</span>
+                <div className="seg">
+                  {ROOMS.map((r) => (
+                    <button key={r.id} className={r.id === room.id ? "is-on" : ""} onClick={() => pickRoom(r)} aria-pressed={r.id === room.id}>
+                      {r.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <div className="room__row">
+                <span className="mono-xxs muted">Size</span>
+                <div className="seg">
+                  {SIZES.map((s) => (
+                    <button
+                      key={s.id}
+                      className={s.id === options.size ? "is-on" : ""}
+                      onClick={() => onOptions({ size: s.id })}
+                      aria-pressed={s.id === options.size}
+                      title={s.label}
+                    >
+                      {s.id.toUpperCase()}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <div className="room__row">
+                <span className="mono-xxs muted">Frame</span>
+                <div className="seg">
+                  {FRAME_OPTS.map((f) => (
+                    <button key={f.id} className={f.id === options.frame ? "is-on" : ""} onClick={() => onOptions({ frame: f.id })} aria-pressed={f.id === options.frame}>
+                      {f.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <div className="room__swatches">
+                <div>
+                  <span className="mono-xxs muted">Wall</span>
+                  <div className="room__dots">
+                    {WALLS.map((w) => (
+                      <button
+                        key={w.id}
+                        className={`dot-swatch${w.id === wall.id ? " is-on" : ""}`}
+                        style={{ background: w.hex }}
+                        onClick={() => setWall(w)}
+                        aria-label={`${w.label} wall`}
+                        title={w.label}
+                      />
+                    ))}
+                  </div>
+                </div>
+                <div className={options.frame === "unframed" ? "is-disabled" : undefined}>
+                  <span className="mono-xxs muted">Finish</span>
+                  <div className="room__dots">
+                    {FRAME_COLORS.map((c) => (
+                      <button
+                        key={c.id}
+                        className={`dot-swatch${c.id === options.frameColor && options.frame !== "unframed" ? " is-on" : ""}`}
+                        style={{ background: c.hex }}
+                        onClick={() => onOptions({ frameColor: c.id, frame: options.frame === "unframed" ? "classic" : options.frame })}
+                        aria-label={`${c.label} frame`}
+                        title={c.label}
+                      />
+                    ))}
+                  </div>
+                </div>
+              </div>
+
+              <div className="room__buy">
+                <div>
+                  <p className="display room__price">{formatPrice(price, currency)}</p>
+                  <p className="mono-xxs muted">{size.short}</p>
+                </div>
+                <button className="btn btn--black" onClick={onAdd}>
+                  Add to bag
+                </button>
+              </div>
+            </>
+          )}
         </aside>
       </motion.div>
     </div>,
